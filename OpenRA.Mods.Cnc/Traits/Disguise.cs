@@ -65,8 +65,7 @@ namespace OpenRA.Mods.Cnc.Traits
 		None = 0,
 		Attack = 1,
 		Damaged = 2,
-		Demolish = 4,
-		Move = 8
+		Move = 4
 	}
 
 	[Desc("Provides access to the disguise command, which makes the actor appear to be another player's actor.")]
@@ -89,10 +88,16 @@ namespace OpenRA.Mods.Cnc.Traits
 			"ValidTargets here has the same targets as warhead and autotarget.")]
 		public readonly HashSet<string> ValidTargets = new HashSet<string>();
 
+		[Desc("This option only works if AutoDisguise is also presant, else it does nothing.",
+			"True = Manual Orders allowed AutoDisguise presant.",
+			"False = Manual Orders not allowed if AutoDisguise presant.")]
+		public readonly bool ManualOrdersAllowed = true;
+
 		public override object Create(ActorInitializer init) { return new Disguise(init.Self, this); }
 	}
 
-	class Disguise : ConditionalTrait<DisguiseInfo>, INotifyCreated, IEffectiveOwner, IIssueOrder, IResolveOrder, IOrderVoice, IRadarColorModifier, INotifyAttack, INotifyDamage, ITick
+	class Disguise : ConditionalTrait<DisguiseInfo>, INotifyCreated, IEffectiveOwner, IIssueOrder, IResolveOrder, IOrderVoice, 
+		IRadarColorModifier, INotifyAttack, INotifyDamage, ITick
 	{
 		public Player AsPlayer { get; private set; }
 		public string AsSprite { get; private set; }
@@ -222,15 +227,12 @@ namespace OpenRA.Mods.Cnc.Traits
 
 		void INotifyAttack.Attacking(Actor self, Target target, Armament a, Barrel barrel)
 		{
-			if (Info.RevealDisguiseOn.HasFlag(RevealDisguiseType.Attack) || Info.RevealDisguiseOn.HasFlag(RevealDisguiseType.Demolish))
+			if (Info.RevealDisguiseOn.HasFlag(RevealDisguiseType.Attack))
 				DisguiseAs(null);
 		}
 
 		void INotifyDamage.Damaged(Actor self, AttackInfo e)
 		{
-			if (e.Damage.Value == 0)
-				return;
-
 			if (Info.RevealDisguiseOn.HasFlag(RevealDisguiseType.Damaged) && e.Damage.Value > 0)
 				DisguiseAs(null);
 		}
@@ -239,9 +241,6 @@ namespace OpenRA.Mods.Cnc.Traits
 		{
 			if (!IsTraitDisabled)
 			{
-				if (self.IsDisabled())
-					DisguiseAs(null);
-
 				if (Info.RevealDisguiseOn.HasFlag(RevealDisguiseType.Move) && (lastPos == null || lastPos.Value != self.Location))
 				{
 					DisguiseAs(null);
@@ -260,22 +259,43 @@ namespace OpenRA.Mods.Cnc.Traits
 				disguisinginfo = info;
 			}
 
+			bool CanAutoTarget(Actor self)
+			{
+				var hasautodisguise = self.TraitOrDefault<AutoDisguise>();
+
+				return !disguisinginfo.ManualOrdersAllowed && hasautodisguise != null && !hasautodisguise.IsTraitDisabled;
+			}
+
 			public override bool CanTargetActor(Actor self, Actor target, TargetModifiers modifiers, ref string cursor)
 			{
 				// Does the original check first than checks the list to see if it has anything in it or not,
 				// than if it does it checks to see if the target type name matches anything in the list
-				return base.CanTargetActor(self, target, modifiers, ref cursor) &&
-					(!disguisinginfo.ValidTargets.Any() || (disguisinginfo.ValidTargets.Any() &&
-					disguisinginfo.ValidTargets.Overlaps(target.GetEnabledTargetTypes())));
+				if (!CanAutoTarget(self))
+				{
+					return base.CanTargetActor(self, target, modifiers, ref cursor) &&
+						(!disguisinginfo.ValidTargets.Any() || (disguisinginfo.ValidTargets.Any() &&
+						disguisinginfo.ValidTargets.Overlaps(target.GetEnabledTargetTypes())));
+				}
+				else
+				{
+					return false;
+				}
 			}
 
 			public override bool CanTargetFrozenActor(Actor self, FrozenActor target, TargetModifiers modifiers, ref string cursor)
 			{
 				// Does the original check first than checks the list to see if it has anything in it or not,
 				// than if it does it checks to see if the target type name matches anything in the list
-				return base.CanTargetFrozenActor(self, target, modifiers, ref cursor) &&
+				if (!CanAutoTarget(self))
+				{
+					return base.CanTargetFrozenActor(self, target, modifiers, ref cursor) &&
 					(!disguisinginfo.ValidTargets.Any() || (disguisinginfo.ValidTargets.Any() &&
 					disguisinginfo.ValidTargets.Overlaps(target.TargetTypes)));
+				}
+				else
+				{
+					return false;
+				}
 			}
 		}
 	}
